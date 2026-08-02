@@ -54,14 +54,14 @@ jobs:
             artifact: kernel-win32-x64-msvc
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: ${{ matrix.target }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '20'
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: Install @napi-rs/cli
         run: npm install -g @napi-rs/cli@^3
       - name: Cross-compile setup (aarch64 linux only)
@@ -73,7 +73,7 @@ jobs:
         working-directory: crates/kernel-napi
         run: napi build --platform --release --target ${{ matrix.target }}
       - name: Upload native artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ${{ matrix.artifact }}
           path: crates/kernel-napi/*.node
@@ -82,14 +82,14 @@ jobs:
     name: wasm
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
         with:
           targets: wasm32-unknown-unknown
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '20'
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       # GH #20 — build the NODEJS target, not `bundler`. The runtime loader (kernel-js loadWasm())
@@ -102,7 +102,7 @@ jobs:
         working-directory: packages/kernel-js
         run: npm run build:wasm
       - name: Upload wasm artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: kernel-wasm
           path: packages/kernel-js/pkg/
@@ -112,32 +112,32 @@ jobs:
     needs: [build-native, build-wasm]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
       - name: Download native artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           path: dist-native
       - name: Download wasm artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           name: kernel-wasm
           path: packages/kernel-js/pkg
       - name: GCP Workload Identity Federation
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
         with:
           workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_WIF_SERVICE_ACCOUNT }}
       - name: Install gcloud SDK
         # Required by scripts/validate-gcp-secrets.mjs (Gate 1 below).
         # The auth action sets ADC but doesn't install the CLI itself.
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
       - name: Fetch NPM_TOKEN from GCP Secret Manager
         id: secrets
-        uses: google-github-actions/get-secretmanager-secrets@v2
+        uses: google-github-actions/get-secretmanager-secrets@2b5f97c5a4b9c105e64646762ad4fc3f5128e6f5
         with:
           secrets: |-
             npm_token:${{ env.GCP_PROJECT_ID }}/NPM_TOKEN
@@ -201,7 +201,7 @@ jobs:
         # Optional — only runs when PINATA_JWT exists in Secret Manager.
         # First-time releases or org-locked orgs skip this gracefully.
         continue-on-error: true
-        uses: google-github-actions/get-secretmanager-secrets@v2
+        uses: google-github-actions/get-secretmanager-secrets@2b5f97c5a4b9c105e64646762ad4fc3f5128e6f5
         with:
           secrets: |-
             pinata_jwt:${{ env.GCP_PROJECT_ID }}/PINATA_JWT

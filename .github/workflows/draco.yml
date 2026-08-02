@@ -38,8 +38,8 @@ jobs:
   draco-deterministic:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: '20' }
 
       - name: Install + build (root, dependency-ordered — resolves @metaharness/* workspace deps)
@@ -91,8 +91,8 @@ jobs:
       GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
       GCP_WIF_SERVICE_ACCOUNT: ${{ vars.GCP_WIF_SERVICE_ACCOUNT }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: '20' }
 
       - name: Is GCP WIF configured? (skip cleanly on forks / no-GCP)
@@ -108,19 +108,19 @@ jobs:
 
       - name: GCP Workload Identity Federation
         if: steps.gate.outputs.configured == 'true'
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed
         with:
           workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_WIF_SERVICE_ACCOUNT }}
 
       - name: Install gcloud SDK
         if: steps.gate.outputs.configured == 'true'
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f
 
       - name: Fetch OPENROUTER_API_KEY from GCP Secret Manager
         if: steps.gate.outputs.configured == 'true'
         id: secrets
-        uses: google-github-actions/get-secretmanager-secrets@v2
+        uses: google-github-actions/get-secretmanager-secrets@2b5f97c5a4b9c105e64646762ad4fc3f5128e6f5
         with:
           secrets: |-
             openrouter_api_key:${{ env.GCP_PROJECT_ID }}/OPENROUTER_API_KEY

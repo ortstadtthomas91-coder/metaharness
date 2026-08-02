@@ -52,10 +52,10 @@ jobs:
         node-version: ['20', '22']
     steps:
       - name: Checkout (only for the README diff — never run the local code)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Node ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: ${{ matrix.node-version }}
 
@@ -139,8 +139,8 @@ jobs:
   smoke-published-lib:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: '20' }
 
       - name: Install @ruvnet/agent-harness-generator from registry
@@ -190,8 +190,8 @@ jobs:
     # .claude-plugin/plugin.json template entry.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: '20' }
 
       - name: Scaffold a harness for every host from `npx metaharness@latest`
@@ -224,7 +224,7 @@ jobs:
     # claude-code wrapper (the most-used path).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: '20' }
 
       - name: Scaffold from a sample of published @metaharness/* wrappers
@@ -267,7 +267,7 @@ jobs:
     if: failure() && github.event_name == 'schedule'
     steps:
       - name: Open issue on scheduled-cron failure
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
             // Only fires on the daily cron path — push-failures already
