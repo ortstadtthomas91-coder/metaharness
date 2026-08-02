@@ -110,4 +110,113 @@ export class ReceiptLog {
     }
     return { ok: true };
   }
+
+  /**
+   * Number of receipts in the chain.
+   */
+  get length(): number {
+    return this.receipts.length;
+  }
+
+  /**
+   * True if the log has no receipts.
+   */
+  get isEmpty(): boolean {
+    return this.receipts.length === 0;
+  }
+
+  /**
+   * Serialize the receipt chain to a deterministic JSON string for export.
+   * Uses canonical (sorted-key) encoding so two identical chains produce
+   * identical bytes — safe for signing, comparison, and audit archival.
+   */
+  export(): string {
+    return canonical({ receipts: this.receipts });
+  }
+
+  /**
+   * Serialize to a plain object for JSON storage or cross-system transport.
+   * The shape is `{ receipts: Receipt[] }` — reversible via `fromJSON()`.
+   */
+  toJSON(): { receipts: Receipt[] } {
+    return { receipts: [...this.receipts] };
+  }
+
+  /**
+   * Import a receipt chain from an exported JSON string. Validates the chain
+   * before accepting — a tampered or truncated chain is rejected with a
+   * descriptive error pointing at the first broken link.
+   *
+   * @throws If the JSON is malformed, has the wrong shape, or the chain fails verification.
+   */
+  static import(json: string): ReceiptLog {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(json);
+    } catch {
+      throw new Error('ReceiptLog.import: malformed JSON');
+    }
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray((parsed as Record<string, unknown>).receipts)) {
+      throw new Error('ReceiptLog.import: expected { receipts: Receipt[] }');
+    }
+    const log = new ReceiptLog();
+    for (const r of (parsed as { receipts: Receipt[] }).receipts) {
+      log.receipts.push(r);
+    }
+    const result = log.verify();
+    if (!result.ok) {
+      throw new Error(`ReceiptLog.import: chain broken at index ${result.brokenAt}: ${result.reason}`);
+    }
+    return log;
+  }
+
+  /**
+   * Reconstruct a ReceiptLog from a plain object (the shape produced by `toJSON()`
+   * or `export()`). Validates the chain before accepting.
+   *
+   * @throws If the shape is wrong or the chain fails verification.
+   */
+  static fromJSON(obj: unknown): ReceiptLog {
+    if (!obj || typeof obj !== 'object' || !Array.isArray((obj as Record<string, unknown>).receipts)) {
+      throw new Error('ReceiptLog.fromJSON: expected { receipts: Receipt[] }');
+    }
+    const log = new ReceiptLog();
+    for (const r of (obj as { receipts: Receipt[] }).receipts) {
+      log.receipts.push(r);
+    }
+    const result = log.verify();
+    if (!result.ok) {
+      throw new Error(`ReceiptLog.fromJSON: chain broken at index ${result.brokenAt}: ${result.reason}`);
+    }
+    return log;
+  }
+
+  /**
+   * Merge another ReceiptLog's chain into this one. The imported chain is
+   * appended after the current tail, with hashes re-linked so the combined
+   * chain remains valid and verifiable. Returns the number of receipts added.
+   *
+   * This enables cross-run receipt aggregation — e.g., merging daily audit
+   * logs into a monthly compliance archive without breaking the hash chain.
+   *
+   * @throws If the source chain fails its own verification.
+   */
+  merge(source: ReceiptLog): number {
+    if (source.isEmpty) return 0;
+    const sourceVerify = source.verify();
+    if (!sourceVerify.ok) {
+      throw new Error(`ReceiptLog.merge: source chain broken at index ${sourceVerify.brokenAt}: ${sourceVerify.reason}`);
+    }
+    const startCount = this.receipts.length;
+    for (const r of source.receipts) {
+      this.receipts.push(r);
+    }
+    for (let i = startCount; i < this.receipts.length; i++) {
+      const prevHash = i > 0 ? this.receipts[i - 1].thisHash : GENESIS;
+      const { thisHash, ...body } = this.receipts[i];
+      const newBody = { ...body, prevHash };
+      this.receipts[i] = { ...newBody, thisHash: hash(newBody) } as Receipt;
+    }
+    return this.receipts.length - startCount;
+  }
 }
