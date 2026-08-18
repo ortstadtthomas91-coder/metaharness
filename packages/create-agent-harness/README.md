@@ -50,6 +50,7 @@ npx metaharness my-legal-bot \
 | `hermes` | `cli-config.yaml` + `optional-mcps/*.yaml` |
 | `openclaw` | `~/.openclaw/openclaw.json` + workspace SKILL.md + install runbook |
 | `rvm` | RVM partition manifest + capability table + wasm-guest + install runbook (hardware-isolated) |
+| `prime-agent` | `.prime/agent/skills/` Python-backed skill per tool (no MCP by design) + `install-prime-agent.md` runbook; deny-lists emit `SANDBOX-REQUIRED.md` (ADR-247) |
 
 Multi-host: pass `--host` multiple times.
 
@@ -84,7 +85,7 @@ of normal harness scaffolding. Install it only when you want a locally bound,
 Claude-compatible routing endpoint with Meta-Proxy's own Cognitum OAuth flow:
 
 ```bash
-npx metaharness proxy install --yes   # signed v0.7.1 download; checksum + Ed25519 verified
+npx metaharness proxy install --yes   # pinned signed download; checksum + Ed25519 verified
 npx metaharness proxy run -- claude   # starts the sidecar and routes this Claude session through it
 npx metaharness proxy run --policy critical -- claude -p "review this migration"
 ```
@@ -98,7 +99,26 @@ select consented Cloud or Sponsored capacity per request. Cognitum login is
 needed only for Cloud routing, not for installation or normal Passthrough.
 
 Use `npx metaharness proxy login` to authorize Cognitum Cloud routing, and
-`npx metaharness proxy status` to inspect the managed sidecar.
+`npx metaharness proxy status` to inspect the managed sidecar. Use `proxy enable`
+to configure login start, `proxy stop` for a stop that survives crash-restart
+policy in the current session, `proxy start` to resume it, `proxy logs` for the
+managed log, `proxy disable` to remove login start, and `proxy uninstall --yes`
+to remove the managed runtime. Uninstall intentionally preserves credentials;
+run `proxy logout` first when credential removal is required.
+
+On Windows this is a least-privilege per-user Scheduled Task. Status comes from
+locale-neutral ScheduledTasks API enum state and reports registration, task
+enablement, and running state separately. Disable and ambiguous-start cleanup
+require a stable stopped state. A failed enable restores a pre-existing absent
+or disabled task exactly; it deletes the task/XML only when both were created by
+that attempt. A registered task without its owned XML is never overwritten or
+deleted by label alone, and
+an owned disabled task removed by an ambiguous create is recreated from that XML
+and returned to disabled after an authoritative re-read, even if the compensating
+create response is also lost. On Linux, ambiguous `disable --now` and later `daemon-reload`
+failures re-read manager state and restore the prior login and running state,
+or fail closed with the owned definition preserved when restoration cannot be
+proved.
 
 ### Per-worktree routing policy
 

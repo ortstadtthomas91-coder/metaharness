@@ -211,6 +211,26 @@ function providerEnvLines(indent: string): string[] {
   ];
 }
 
+// YAML 1.1 core-schema bare scalars a PyYAML-family loader (hermes) would
+// resolve to bool/null/int instead of a string, even though they match the
+// bare-identifier shape below.
+const YAML_RESERVED_BARE = /^(?:null|~|true|false|yes|no|on|off|[+-]?\d+(?:\.\d+)?)$/i;
+
+/**
+ * Escape a string for YAML *mapping-key* position (kept in lockstep with
+ * `@metaharness/host-hermes`'s `yamlKey()` and the CLI scaffold path's copy
+ * in `packages/create-agent-harness/src/host-config.ts` — this module must
+ * stay byte-for-byte in parity with that file per ADR-027, so the same fix
+ * is duplicated here rather than shared via import). `cfg.name` is
+ * unconstrained and lands in `agent.personalities.<name>` key position for
+ * the hermes case below; a name containing `:`/`#`/etc previously corrupted
+ * the emitted YAML.
+ */
+function yamlKey(s: string): string {
+  const isSafeIdentifier = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(s);
+  return isSafeIdentifier && !YAML_RESERVED_BARE.test(s) ? s : JSON.stringify(s.replace(/[\r\n]+/g, ' '));
+}
+
 /** The MCP server entry a host config registers, or null when MCP is off. */
 function mcpServerEntry(cfg: HarnessConfig): Record<string, unknown> | null {
   if (cfg.primitives.mcp === 'off') return null;
@@ -240,7 +260,7 @@ function hostFiles(host: HostId, cfg: HarnessConfig): GenFile[] {
       // `model:` + `agent.personalities`; no name/description/scrub keys.
       const persona = (cfg.description || `You are ${cfg.name}.`).replace(/[\r\n]+/g, ' ');
       const files: GenFile[] = [
-        { path: 'cli-config.yaml', content: `# Hermes Agent config for ${cfg.name} — subset of cli-config.yaml.example.\nmodel:\n  provider: "auto"\nagent:\n  personalities:\n    ${cfg.name}: ${JSON.stringify(persona)}\n` },
+        { path: 'cli-config.yaml', content: `# Hermes Agent config for ${cfg.name} — subset of cli-config.yaml.example.\nmodel:\n  provider: "auto"\nagent:\n  personalities:\n    ${yamlKey(cfg.name)}: ${JSON.stringify(persona)}\n` },
       ];
       if (cfg.primitives.mcp !== 'off') {
         files.push({ path: `optional-mcps/${cfg.name}.json`, content: JSON.stringify({ [cfg.name]: mcpServerEntry(cfg) }, null, 2) + '\n' });
@@ -347,6 +367,27 @@ function hostFiles(host: HostId, cfg: HarnessConfig): GenFile[] {
         { path: `.github/workflows/${slug}.yml`, content: workflow },
         { path: `.github/actions/${slug}/action.yml`, content: action },
         { path: 'install.md', content: `# Installing ${cfg.name} as a GitHub Actions harness\n\n1. Commit \`.github/workflows/${slug}.yml\` + \`.github/actions/${slug}/action.yml\`.\n2. Add your model-provider key as a repo secret — one of \`ANTHROPIC_API_KEY\`, \`OPENROUTER_API_KEY\`, or \`OPENAI_API_KEY\` (the workflow passes all three through; set whichever your harness uses).\n3. Trigger: Actions → ${slug} → Run workflow, or comment on an issue.\n` },
+      ];
+    }
+    case 'prime-agent': {
+      // ADR-247 — Prime Agent: project skills plus remote HTTP MCP support.
+      // ADR-027 parity contract: byte-identical with
+      // packages/create-agent-harness/src/host-config.ts.
+      const mcp = cfg.primitives.mcp;
+      const runbook = [
+        `# Install ${cfg.name} into Prime Agent`,
+        '',
+        'Prime Agent loads tools from project skills and supports remote HTTP MCP integrations; local stdio MCP is not currently wired.',
+        '',
+        mcp === 'off'
+          ? 'MCP: off — nothing further.'
+          : `MCP (${mcp}): remote HTTP servers are emitted as Python-backed integrations; local stdio servers are listed as unsupported.`,
+        '',
+        'Sandbox: Prime Agent is not sandboxed. Denied capabilities require an external sandbox (ADR-247).',
+      ].join('\n') + '\n';
+      return [
+        { path: 'install-prime-agent.md', content: runbook },
+        { path: '.prime/agent/skills/README.md', content: `# ${cfg.name} skills\n\nGenerated skill directories land here (one per tool).\n` },
       ];
     }
   }

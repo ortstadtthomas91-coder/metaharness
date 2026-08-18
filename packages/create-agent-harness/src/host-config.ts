@@ -12,7 +12,25 @@
 //
 // claude-code is intentionally NOT handled here — the templates already emit a
 // richer .claude/ tree (settings.json, commands, plugin manifest). This module
-// emits the OTHER eight hosts' native config.
+// emits the OTHER nine hosts' native config.
+
+// YAML 1.1 core-schema bare scalars a PyYAML-family loader (hermes) would
+// resolve to bool/null/int instead of a string, even though they match the
+// bare-identifier shape below.
+const YAML_RESERVED_BARE = /^(?:null|~|true|false|yes|no|on|off|[+-]?\d+(?:\.\d+)?)$/i;
+
+/**
+ * Escape a string for YAML *mapping-key* position (kept in lockstep with
+ * `@metaharness/host-hermes`'s `yamlKey()` — this module is intentionally
+ * dependency-free so it can't import that package, see header). `cfg.name`
+ * is unconstrained at this type's level and lands in
+ * `agent.personalities.<name>` key position for the hermes case below; a
+ * name containing `:`/`#`/etc previously corrupted the emitted YAML.
+ */
+function yamlKey(s: string): string {
+  const isSafeIdentifier = /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(s);
+  return isSafeIdentifier && !YAML_RESERVED_BARE.test(s) ? s : JSON.stringify(s.replace(/[\r\n]+/g, ' '));
+}
 
 export interface HostConfigInput {
   name: string;
@@ -86,7 +104,7 @@ export function hostConfigFiles(host: string, cfg: HostConfigInput): HostFile[] 
       // `model:` + `agent.personalities` schema; no name/description/scrub keys.
       const persona = (cfg.description || `You are ${cfg.name}.`).replace(/[\r\n]+/g, ' ');
       const files: HostFile[] = [
-        { path: 'cli-config.yaml', content: `# Hermes Agent config for ${cfg.name} — subset of cli-config.yaml.example.\nmodel:\n  provider: "auto"\nagent:\n  personalities:\n    ${cfg.name}: ${JSON.stringify(persona)}\n` },
+        { path: 'cli-config.yaml', content: `# Hermes Agent config for ${cfg.name} — subset of cli-config.yaml.example.\nmodel:\n  provider: "auto"\nagent:\n  personalities:\n    ${yamlKey(cfg.name)}: ${JSON.stringify(persona)}\n` },
       ];
       if (server) files.push({ path: `optional-mcps/${cfg.name}.json`, content: JSON.stringify({ [cfg.name]: server }, null, 2) + '\n' });
       return files;
@@ -182,6 +200,24 @@ export function hostConfigFiles(host: string, cfg: HostConfigInput): HostFile[] 
         { path: `.github/workflows/${slug}.yml`, content: workflow },
         { path: `.github/actions/${slug}/action.yml`, content: action },
         { path: 'install.md', content: `# Installing ${cfg.name} as a GitHub Actions harness\n\n1. Commit \`.github/workflows/${slug}.yml\` + \`.github/actions/${slug}/action.yml\`.\n2. Add your model-provider key as a repo secret — one of \`ANTHROPIC_API_KEY\`, \`OPENROUTER_API_KEY\`, or \`OPENAI_API_KEY\`.\n3. Trigger: Actions → ${slug} → Run workflow, or comment on an issue.\n` },
+      ];
+    }
+
+    case 'prime-agent': {
+      // ADR-247 — Prime Agent uses project skills, supports remote HTTP MCP,
+      // and has no native sandbox. Runtime-specific files are emitted by
+      // @metaharness/host-prime-agent; scaffold-time emits concise guidance.
+      return [
+        { path: 'install-prime-agent.md', content: [
+          `# Install ${cfg.name} into Prime Agent`,
+          '',
+          'Prime Agent loads tools from project skills and supports remote HTTP MCP integrations; local stdio MCP is not currently wired.',
+          '',
+          cfg.mcp === 'off' ? 'MCP: off — nothing further.' : `MCP (${cfg.mcp}): remote HTTP servers are emitted as Python-backed integrations; local stdio servers are listed as unsupported.`,
+          '',
+          'Sandbox: Prime Agent is not sandboxed. Denied capabilities require an external sandbox (ADR-247).',
+        ].join('\n') + '\n' },
+        { path: '.prime/agent/skills/README.md', content: `# ${cfg.name} skills\n\nGenerated skill directories land here (one per tool).\n` },
       ];
     }
 
