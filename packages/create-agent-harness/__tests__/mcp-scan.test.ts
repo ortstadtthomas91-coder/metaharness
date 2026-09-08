@@ -93,6 +93,64 @@ describe('scanMcp', () => {
     const r = scanMcp(dir);
     expect(r.mcpEnabled).toBe(false);
   });
+
+  // GH #209: neither wildcard-tool-perm (checks literal '*', not 'Bash(*)') nor risky-bash-allow
+  // (regex alternation was rm|curl|wget|sudo|chmod|ssh — no '*') ever matched a fully unscoped Bash
+  // allow-rule. No shipped generator currently writes exactly 'Bash(*)'/'Bash' into .claude/settings
+  // .json (verified: web-ui's claudeSettings() hardcodes a scoped Bash(npx <name>*); host-config.ts's
+  // 'Bash(*)' push reaches only non-claude-code config shapes mcp-scan doesn't read) — this closes
+  // the config-shape blind spot as defense-in-depth, not as a report of a live generator bug.
+  it("flags 'Bash(*)' as unrestricted-bash-allow HIGH even when mcp-policy.json's allowShell is false", async () => {
+    const dir = await makeHarness({
+      policy: SAFE, // allowShell: false — this finding must come from the allow-rule itself
+      allow: ['Bash(*)'],
+      deps: { '@metaharness/kernel': '0.1.0' },
+    });
+    const r = scanMcp(dir);
+    const ids = r.findings.map((f) => f.id);
+    expect(ids).toContain('unrestricted-bash-allow');
+    expect(r.findings.find((f) => f.id === 'unrestricted-bash-allow')?.severity).toBe('high');
+    expect(r.worst).toBe('high');
+    expect(mcpScanCmd([dir]).code).toBe(1);
+  });
+
+  it("flags bare 'Bash' (no matcher) as unrestricted-bash-allow HIGH", async () => {
+    const dir = await makeHarness({
+      policy: SAFE,
+      allow: ['Bash'],
+      deps: { '@metaharness/kernel': '0.1.0' },
+    });
+    const r = scanMcp(dir);
+    expect(r.findings.map((f) => f.id)).toContain('unrestricted-bash-allow');
+    expect(r.worst).toBe('high');
+  });
+
+  it("does not conflate 'Bash(*)' with the narrower risky-bash-allow rule", async () => {
+    const dir = await makeHarness({ policy: SAFE, allow: ['Bash(*)'], deps: { '@metaharness/kernel': '0.1.0' } });
+    const r = scanMcp(dir);
+    expect(r.findings.map((f) => f.id)).not.toContain('risky-bash-allow');
+  });
+
+  // GH #209: unlike 'Bash(*)' above, this one IS live today — a real `metaharness --template
+  // vertical:ai` scaffold ships 'Bash(python *)' in its .claude/settings.json (see templates/
+  // vertical_ai/.claude/settings.json.tmpl). python/node/ruby/perl/bash/sh are arbitrary-code-
+  // execution interpreters, same risk class as the rm/curl/sudo list, but were absent from the
+  // regex's binary alternation, so the shipped pattern was previously unflagged by any check.
+  it("flags 'Bash(python *)' (the exact pattern vertical:ai's own template ships) as risky-bash-allow", async () => {
+    const dir = await makeHarness({ policy: SAFE, allow: ['Bash(python *)'], deps: { '@metaharness/kernel': '0.1.0' } });
+    const r = scanMcp(dir);
+    const ids = r.findings.map((f) => f.id);
+    expect(ids).toContain('risky-bash-allow');
+    expect(r.findings.find((f) => f.id === 'risky-bash-allow')?.severity).toBe('medium');
+  });
+
+  it("flags unscoped 'Bash(node -e *)' and 'Bash(ruby *)' as risky-bash-allow too", async () => {
+    for (const rule of ['Bash(node -e *)', 'Bash(ruby *)', 'Bash(perl *)', 'Bash(sh *)']) {
+      const dir = await makeHarness({ policy: SAFE, allow: [rule], deps: { '@metaharness/kernel': '0.1.0' } });
+      const r = scanMcp(dir);
+      expect(r.findings.map((f) => f.id), `expected ${rule} to be flagged`).toContain('risky-bash-allow');
+    }
+  });
 });
 
 // GH #4 (mutation finding): the CI security gate blocks (exit 1) iff a HIGH finding is present, so a
@@ -160,5 +218,76 @@ describe('mcpScanCmd', () => {
     const r = mcpScanCmd(['--json', good]);
     const parsed = JSON.parse(r.lines.join('\n'));
     expect(parsed.dir).toBe(good);
+  });
+});
+
+// Regression: a directory registering MCP only via a top-level `.mcp.json`
+// (no .harness/mcp-policy.json, no .claude/settings.json mcpServers) must
+// still be detected as MCP-in-use. `.mcp.json` is a primary, actively-read
+// MCP signal elsewhere in this codebase (score.ts's hasMcp, eject.ts,
+// analyze-repo.ts) — scanMcp() previously ignored it entirely, which
+// threat-model.ts's own fix (reusing scanMcp's mcpEnabled as its single
+// source of truth) would otherwise have silently inherited as a new
+// false-negative for this config surface. Uses raw fs calls rather than
+// makeHarness() because that helper always writes .claude/settings.json.
+describe('scanMcp — .mcp.json as an independent MCP-in-use signal', () => {
+  it('detects MCP as enabled from .mcp.json alone', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-scan-mcpjson-'));
+    await writeFile(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { bot: { command: 'npx' } } }), 'utf-8');
+    const r = scanMcp(dir);
+    expect(r.mcpEnabled).toBe(true);
+    expect(r.findings.some((f) => f.id === 'mcp-disabled')).toBe(false);
+  });
+
+  it('stays disabled when no policy, no .mcp.json, and empty mcpServers', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-scan-mcpjson-'));
+    await mkdir(join(dir, '.claude'), { recursive: true });
+    await writeFile(join(dir, '.claude', 'settings.json'), JSON.stringify({ mcpServers: {} }), 'utf-8');
+    const r = scanMcp(dir);
+    expect(r.mcpEnabled).toBe(false);
+    expect(r.findings.some((f) => f.id === 'mcp-disabled')).toBe(true);
+  });
+
+  it('duplicate/conflicting registration across all 3 surfaces at once: findings are additive, neither surface suppresses the other, and the result is deterministic', async () => {
+    // A harness that registers MCP three times over (policy file + .mcp.json
+    // + settings.mcpServers — redundant but not invalid) with directly
+    // conflicting governance signals: .harness/mcp-policy.json is fully
+    // compliant (SAFE-shaped), while .claude/settings.json separately grants
+    // an unrestricted 'Bash(*)' allow-rule and denies nothing for .env. There
+    // is no "which surface wins" question here by design (see mcp-scan.ts's
+    // comment above `mcpEnabled`) — both the policy's cleanliness and the
+    // settings' real risk must be visible in the same report.
+    const dir = await mkdtemp(join(tmpdir(), 'mcp-scan-conflict-'));
+    await mkdir(join(dir, '.harness'), { recursive: true });
+    await mkdir(join(dir, '.claude'), { recursive: true });
+    await writeFile(join(dir, '.harness', 'mcp-policy.json'), JSON.stringify(SAFE), 'utf-8');
+    await writeFile(join(dir, '.mcp.json'), JSON.stringify({ mcpServers: { other: { command: 'npx' } } }), 'utf-8');
+    await writeFile(
+      join(dir, '.claude', 'settings.json'),
+      JSON.stringify({
+        permissions: { allow: ['Bash(*)'], deny: [] },
+        mcpServers: { bot: { command: 'npx' } },
+      }),
+      'utf-8',
+    );
+    await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'bot', dependencies: {} }), 'utf-8');
+
+    const r = scanMcp(dir);
+    expect(r.mcpEnabled).toBe(true);
+    // The compliant policy must NOT suppress the real settings-derived risk.
+    expect(r.findings.some((f) => f.id === 'unrestricted-bash-allow')).toBe(true);
+    // The risky settings must NOT make the tool claim there's no policy —
+    // a compliant policy file is genuinely present.
+    expect(r.findings.some((f) => f.id === 'no-policy')).toBe(false);
+    expect(r.findings.some((f) => f.id === 'no-default-deny')).toBe(false);
+    // The settings.deny=[] (no .env guard) finding must also independently
+    // surface — none of the 3 registration surfaces masks another's checks.
+    expect(r.findings.some((f) => f.id === 'no-secret-guard')).toBe(true);
+    expect(r.worst).toBe('high');
+
+    // Deterministic: re-scanning the identical fixture is order-stable and
+    // produces the exact same finding set, not just the same count.
+    const r2 = scanMcp(dir);
+    expect(r2.findings.map((f) => f.id)).toEqual(r.findings.map((f) => f.id));
   });
 });

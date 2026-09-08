@@ -54,12 +54,27 @@ export function scanMcp(dir: string): ScanReport {
   const settings = readJson(join(root, '.claude', 'settings.json')) as
     | { permissions?: { allow?: string[]; deny?: string[] }; mcpServers?: Record<string, unknown> }
     | undefined;
+  const mcpJson = readJson(join(root, '.mcp.json'));
   const pkg = readJson(join(root, 'package.json')) as
     | { dependencies?: Record<string, string> }
     | undefined;
 
+  // Three independent, valid ways a harness can register MCP: a policy file,
+  // a top-level .mcp.json, or .claude/settings.json's mcpServers key. All
+  // three must be checked here — this is the one place downstream callers
+  // (e.g. threat-model.ts's mcpInUse) rely on as the authoritative answer.
+  //
+  // Deterministic precedence when more than one surface is present at once
+  // (duplicate/conflicting registration): there is none, by design — the
+  // three are OR'd for `mcpEnabled`, and every check below is additive and
+  // keyed to its own source file, not to "is MCP in use" generally. A
+  // compliant `.harness/mcp-policy.json` does not suppress a risky
+  // `.claude/settings.json` permission (or vice versa): each surface's
+  // findings surface independently and are never merged, deduped, or
+  // shadowed by another surface's presence. See mcp-scan.test.ts's
+  // "duplicate/conflicting registration" case.
   const mcpEnabled =
-    !!policy || !!(settings && settings.mcpServers && Object.keys(settings.mcpServers).length > 0);
+    !!policy || !!mcpJson || !!(settings && settings.mcpServers && Object.keys(settings.mcpServers).length > 0);
 
   if (!mcpEnabled) {
     add({ id: 'mcp-disabled', severity: 'info', title: 'No MCP surface', detail: 'No MCP policy or server registered — nothing to scan.' });
@@ -105,8 +120,20 @@ export function scanMcp(dir: string): ScanReport {
     if (a === '*' || a === 'mcp__*' || a === 'mcp__*__*') {
       add({ id: 'wildcard-tool-perm', severity: 'high', title: `Over-broad tool permission: ${a}`, detail: 'Wildcard MCP permissions grant every tool on every server. Scope to mcp__<server>__*.' });
     }
-    if (/^Bash\((rm|curl|wget|sudo|chmod|ssh)\b/i.test(a) && !a.includes('status') && !a.includes('--dry-run')) {
-      add({ id: 'risky-bash-allow', severity: 'medium', title: `Risky shell allow-rule: ${a}`, detail: 'Allowing rm/curl/wget/sudo/ssh broadly is dangerous; narrow the glob.' });
+    if (a === 'Bash' || a === 'Bash(*)') {
+      // Fully unscoped — no command restriction at all, strictly more dangerous than the interpreter
+      // list below. No current generator wires exactly this string into .claude/settings.json (the
+      // web-ui's claudeSettings() hardcodes a scoped Bash(npx <name>*), and host-config.ts's own
+      // 'Bash(*)' push only reaches non-claude-code config shapes mcp-scan doesn't read) — this is
+      // defense-in-depth against the config shape itself, not a report of a live generator bug.
+      add({ id: 'unrestricted-bash-allow', severity: 'high', title: `Unrestricted shell allow-rule: ${a}`, detail: 'This allow-rule places no restriction on which commands Bash may run — equivalent to allowShell=true regardless of what .harness/mcp-policy.json says. Scope to specific commands.' });
+    } else if (/^Bash\((rm|curl|wget|sudo|chmod|ssh|python3?|node|ruby|perl|bash|sh)\b/i.test(a) && !a.includes('status') && !a.includes('--dry-run')) {
+      // python/node/ruby/perl/bash/sh are arbitrary-code-execution interpreters, not narrow file
+      // operations like rm/curl — an unscoped allow-rule for one is a live gap today: the vertical:ai
+      // template's .claude/settings.json.tmpl ships 'Bash(python *)' in its allow list as shown by a
+      // real `metaharness --template vertical:ai` scaffold, and it was previously unflagged by any
+      // check in this loop (not the exact-wildcard check above, not this regex before this fix).
+      add({ id: 'risky-bash-allow', severity: 'medium', title: `Risky shell allow-rule: ${a}`, detail: 'Allowing rm/curl/wget/sudo/ssh, or an unscoped script interpreter, broadly is dangerous; narrow the glob.' });
     }
   }
   const guardsEnv = deny.some((d) => /\.env/.test(d));
