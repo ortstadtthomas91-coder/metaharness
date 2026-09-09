@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Boxes, Github, HelpCircle, Sparkles, Gauge, Route, ShieldCheck } from 'lucide-react';
+import { SpeedInsights } from '@vercel/speed-insights/react';
 import { HarnessBuilder } from './components/HarnessBuilder';
 import { ArtifactBuilder } from './components/ArtifactBuilder';
 import { RepoImporter } from './components/RepoImporter';
@@ -134,6 +135,8 @@ export default function App() {
           into Claude desktop or claude.ai. <span className="text-slate-400">Embeddings recommend · rules generate · tests prove.</span>
         </p>
       </footer>
+
+      <SpeedInsights />
     </div>
   );
 }
